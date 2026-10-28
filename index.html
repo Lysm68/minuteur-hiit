@@ -108,19 +108,7 @@ summary { padding: 8px 0; color: var(--texte); font-weight: 600; cursor: pointer
 #detail li { padding: 4px 0; }
 #detail b { color: var(--texte); font-weight: 600; }
 .son { padding: 14px 16px; margin-bottom: 16px; }
-.interrupteur { display: flex; align-items: center; justify-content: space-between; gap: 12px; font-weight: 600; }
-.interrupteur input {
-  -webkit-appearance: none; appearance: none; flex: none; margin: 0;
-  width: 51px; height: 31px; border-radius: 16px; background: var(--trait);
-  position: relative; transition: background-color .2s;
-}
-.interrupteur input::after {
-  content: ""; position: absolute; top: 2px; left: 2px; width: 27px; height: 27px;
-  border-radius: 50%; background: #fff; transition: transform .2s;
-}
-.interrupteur input:checked { background: #34c759; }
-.interrupteur input:checked::after { transform: translateX(20px); }
-.aide { margin: 8px 0 12px; font-size: 14px; color: var(--doux); }
+.aide { margin: 0 0 12px; font-size: 14px; color: var(--doux); }
 .secondaire { min-height: 44px; padding: 0 16px; border-radius: 12px; background: var(--trait); font-weight: 600; }
 .secondaire:active { background: var(--appui); }
 .gros {
@@ -214,11 +202,7 @@ summary { padding: 8px 0; color: var(--texte); font-weight: 600; cursor: pointer
     </details>
   </div>
   <div class="bloc son">
-    <label class="interrupteur">
-      <span>Bips même en mode silencieux</span>
-      <input type="checkbox" id="silencieux">
-    </label>
-    <p class="aide" id="aide-son"></p>
+    <p class="aide">Les bips se mélangent à ta musique. Pour les entendre, l’iPhone (ou l’iPad) ne doit pas être en mode silencieux.</p>
     <button type="button" class="secondaire" id="tester">Tester le son</button>
   </div>
   <div class="pied"><button type="button" class="gros" id="demarrer">Démarrer</button></div>
@@ -255,8 +239,7 @@ summary { padding: 8px 0; color: var(--texte); font-weight: 600; cursor: pointer
   const $ = id => document.getElementById(id);
   const el = {
     reglages: $('reglages'), liste: $('liste'), frise: $('frise'), total: $('total'),
-    details: $('details'), detail: $('detail'), silencieux: $('silencieux'), aideSon: $('aide-son'),
-    tester: $('tester'), demarrer: $('demarrer'),
+    details: $('details'), detail: $('detail'), tester: $('tester'), demarrer: $('demarrer'),
     seance: $('seance'), position: $('position'), reste: $('reste'), phase: $('phase'), chrono: $('chrono'),
     barre: $('barre-phase'), ensuite: $('ensuite'), etatPause: $('etat-pause'), friseSeance: $('frise-seance'),
     curseur: $('curseur'), alerteSon: $('alerte-son'), arreter: $('arreter'), pause: $('pause'), passer: $('passer'),
@@ -278,9 +261,21 @@ summary { padding: 8px 0; color: var(--texte); font-weight: 600; cursor: pointer
   }
   const deuxChiffres = n => String(n).padStart(2, '0');
 
+  // ---------- Mémoire du téléphone ----------
+  function lire(cle) {
+    try { return JSON.parse(localStorage.getItem(cle)); } catch (e) { return null; }
+  }
+  function stocker(cle, valeur) {
+    try { localStorage.setItem(cle, JSON.stringify(valeur)); } catch (e) { /* stockage indisponible */ }
+  }
+  function effacer(cle) {
+    try { localStorage.removeItem(cle); } catch (e) { /* stockage indisponible */ }
+  }
+
   // ---------- Réglages ----------
-  const CLE = 'minuteur-hiit:v1';
-  const DEFAUT = { precycle: 60, cycles: 2, rounds: 3, effort: 45, repos: 25, entreCycles: 75, silencieux: false };
+  const CLE = 'minuteur-hiit:v2';
+  const ANCIENNE_CLE = 'minuteur-hiit:v1'; // première version, qui proposait 2 cycles d'office
+  const DEFAUT = { precycle: 60, cycles: 5, rounds: 3, effort: 45, repos: 25, entreCycles: 75 };
   const CHAMPS = [
     { cle: 'precycle', nom: 'Précycle', aide: 'avant le premier cycle', type: 'precycle', duree: true, min: 0, max: 1800 },
     { cle: 'cycles', nom: 'Cycles', duree: false, min: 1, max: 99 },
@@ -302,16 +297,18 @@ summary { padding: 8px 0; color: var(--texte); font-weight: 600; cursor: pointer
         const v = borner(brut[c.cle], c.min, c.max);
         if (v !== null) r[c.cle] = v;
       }
-      r.silencieux = brut.silencieux === true;
     }
     return r;
   }
   function charger() {
-    try { return valider(JSON.parse(localStorage.getItem(CLE))); } catch (e) { return valider(null); }
+    const brut = lire(CLE);
+    if (brut) return valider(brut);
+    // Réglages gardés par la première version : ses 2 cycles d'office deviennent les 5 d'aujourd'hui.
+    const ancien = lire(ANCIENNE_CLE);
+    if (ancien && ancien.cycles === 2) ancien.cycles = DEFAUT.cycles;
+    return valider(ancien);
   }
-  function enregistrer() {
-    try { localStorage.setItem(CLE, JSON.stringify(reglages)); } catch (e) { /* stockage indisponible */ }
-  }
+  function enregistrer() { stocker(CLE, reglages); }
   const reglages = charger();
 
   // ---------- Plan de la séance ----------
@@ -344,8 +341,9 @@ summary { padding: 8px 0; color: var(--texte); font-weight: 600; cursor: pointer
   }
 
   // ---------- Son ----------
-  // Sur iPhone, « ambient » mélange les bips à la musique mais se tait en mode silencieux ;
-  // « playback » sonne en mode silencieux mais coupe la musique des autres applis.
+  // Sur iPhone, la session audio « ambient » mélange les bips à la musique des autres applis
+  // (Musique, Spotify…) au lieu de la couper ; en contrepartie, elle se tait en mode silencieux.
+  // Elle est réglée dès l'ouverture, avant le moindre son.
   const SONS = {
     tic: [[880, 0.12, 0.22]],
     precycle: [[660, 0.3, 0.26]],
@@ -357,10 +355,13 @@ summary { padding: 8px 0; color: var(--texte); font-weight: 600; cursor: pointer
   let ctx = null;
   const actifs = new Set();
 
-  function preparerSon() {
+  function reglerSessionAudio() {
     try {
-      if ('audioSession' in navigator) navigator.audioSession.type = reglages.silencieux ? 'playback' : 'ambient';
+      if ('audioSession' in navigator) navigator.audioSession.type = 'ambient';
     } catch (e) { /* navigateur sans réglage de session audio */ }
+  }
+  function preparerSon() {
+    reglerSessionAudio();
     let reveil = null;
     try {
       if (!ctx) {
@@ -407,43 +408,42 @@ summary { padding: 8px 0; color: var(--texte); font-weight: 600; cursor: pointer
     }
     actifs.clear();
   }
+  // L'iPhone n'accepte de (re)lancer le son que sur un toucher, par exemple quand l'appli
+  // a été rouverte au milieu d'une séance : l'alerte invite alors à toucher l'écran.
   function reveillerSon() {
-    if (ctx && ctx.state !== 'running') {
-      const p = ctx.resume();
-      if (p && p.then) p.then(majAlerteSon, majAlerteSon);
-    }
-    majAlerteSon();
+    if (!sonPret()) preparerSon();
   }
   function majAlerteSon() {
-    el.alerteSon.hidden = !(seance.boucle && ctx && ctx.state !== 'running');
+    el.alerteSon.hidden = !(seance.boucle && !sonPret());
   }
 
   // ---------- Écran toujours allumé ----------
+  // Tant que l'appli est à l'écran, quel que soit l'écran affiché. Le système rend le verrou
+  // quand l'appli passe en arrière-plan : on le redemande au retour. Safari n'accorde le premier
+  // verrou que sur un toucher : on le redemande aussi à chaque toucher tant qu'il manque.
   let verrou = null, demandeVerrou = null;
   function garderEcran() {
-    if (!('wakeLock' in navigator) || verrou || demandeVerrou) return;
+    if (!('wakeLock' in navigator) || verrou || demandeVerrou || document.visibilityState !== 'visible') return;
     demandeVerrou = navigator.wakeLock.request('screen').then(v => {
       demandeVerrou = null;
-      if (!seance.boucle) { v.release().catch(() => {}); return; }
       verrou = v;
       v.addEventListener('release', () => { if (verrou === v) verrou = null; });
     }, () => { demandeVerrou = null; });
-  }
-  function libererEcran() {
-    const v = verrou;
-    verrou = null;
-    if (v) v.release().catch(() => {});
   }
 
   // ---------- Séance ----------
   // Le temps écoulé se lit sur l'horloge réelle : il reste juste même si l'iPhone suspend
   // l'appli un moment. Les bips manqués pendant l'absence sont sautés, pas joués en rafale.
+  // base : temps déjà écoulé (ms) ; depuis : instant où le chrono est reparti, null en pause.
+  // La séance en cours est gardée dans le téléphone : fermer l'appli ne l'arrête pas.
   const AVANCE = 300;     // ms : les bips sont programmés un peu à l'avance sur l'horloge audio
   const RETARD_MAX = 250; // ms : un bip plus en retard que ça est sauté
-  const seance = { plan: null, sons: [], base: 0, depuis: null, prochain: 0, boucle: null, journal: [] };
+  const CLE_SEANCE = 'minuteur-hiit:seance';
+  const seance = { reglages: null, plan: null, sons: [], base: 0, depuis: null, prochain: 0, boucle: null, journal: [] };
   const NOMS = { precycle: 'Précycle', effort: 'Effort', repos: 'Repos', entre: 'Repos entre cycles' };
 
-  function ecoule() { return seance.base + (seance.depuis === null ? 0 : Date.now() - seance.depuis); }
+  function ecoule() { return Math.max(0, seance.base + (seance.depuis === null ? 0 : Date.now() - seance.depuis)); }
+  function sauverSeance() { stocker(CLE_SEANCE, { reglages: seance.reglages, base: seance.base, depuis: seance.depuis }); }
   function indexPhase(ms) {
     const phases = seance.plan.phases;
     let bas = 0, haut = phases.length - 1;
@@ -508,18 +508,16 @@ summary { padding: 8px 0; color: var(--texte); font-weight: 600; cursor: pointer
     if (ms >= seance.plan.total * 1000) terminer(); else afficher(ms);
   }
 
-  function demarrer() {
-    preparerSon();
+  function lancerSeance(r, base, depuis) {
     couperSons();
-    seance.plan = construirePlan(reglages);
+    seance.reglages = r;
+    seance.plan = construirePlan(r);
     seance.sons = evenementsSonores(seance.plan);
     seance.journal = [];
-    seance.base = 0;
-    seance.depuis = Date.now();
-    seance.prochain = 0;
-    el.seance.classList.remove('pause');
-    el.etatPause.hidden = true;
-    el.pause.textContent = 'Pause';
+    seance.base = base;
+    seance.depuis = depuis;
+    recaler(base); // les bips déjà passés seront sautés au premier tic, sans être joués
+    majPause();
     desarmerArret();
     montrer('seance');
     dessinerFrise(el.friseSeance, seance.plan);
@@ -528,6 +526,26 @@ summary { padding: 8px 0; color: var(--texte); font-weight: 600; cursor: pointer
     garderEcran();
     majAlerteSon();
     tick();
+  }
+  function demarrer() {
+    preparerSon();
+    lancerSeance(Object.assign({}, reglages), 0, Date.now());
+    sauverSeance();
+  }
+  // À la réouverture de l'appli : la séance reprend là où l'horloge réelle l'a menée,
+  // ou l'écran de fin s'affiche si elle s'est terminée entre-temps.
+  function reprendreSeance() {
+    const s = lire(CLE_SEANCE);
+    if (!s || typeof s !== 'object' || !s.reglages) return;
+    const base = Number(s.base), depuis = s.depuis === null ? null : Number(s.depuis);
+    if (!Number.isFinite(base) || base < 0 || (depuis !== null && !Number.isFinite(depuis))) { effacer(CLE_SEANCE); return; }
+    lancerSeance(valider(s.reglages), base, depuis);
+  }
+  function majPause() {
+    const enPause = seance.depuis === null;
+    el.seance.classList.toggle('pause', enPause);
+    el.etatPause.hidden = !enPause;
+    el.pause.textContent = enPause ? 'Reprendre' : 'Pause';
   }
   function basculerPause() {
     if (!seance.boucle) return;
@@ -541,10 +559,8 @@ summary { padding: 8px 0; color: var(--texte); font-weight: 600; cursor: pointer
       seance.depuis = null;
       annulerSons(ms);
     }
-    const enPause = seance.depuis === null;
-    el.seance.classList.toggle('pause', enPause);
-    el.etatPause.hidden = !enPause;
-    el.pause.textContent = enPause ? 'Reprendre' : 'Pause';
+    sauverSeance();
+    majPause();
     tick();
   }
   function passer() {
@@ -553,6 +569,7 @@ summary { padding: 8px 0; color: var(--texte); font-weight: 600; cursor: pointer
     annulerSons(ms);
     seance.base = seance.plan.phases[indexPhase(ms)].fin * 1000;
     if (seance.depuis !== null) seance.depuis = Date.now();
+    sauverSeance();
     recaler(seance.base);
     tick();
   }
@@ -575,7 +592,7 @@ summary { padding: 8px 0; color: var(--texte); font-weight: 600; cursor: pointer
     annulerSons(ecoule());
     clearInterval(seance.boucle);
     seance.boucle = null;
-    libererEcran();
+    effacer(CLE_SEANCE);
     majAlerteSon();
     montrer('reglages');
     majReglages();
@@ -583,8 +600,8 @@ summary { padding: 8px 0; color: var(--texte); font-weight: 600; cursor: pointer
   function terminer() {
     clearInterval(seance.boucle);
     seance.boucle = null;
+    effacer(CLE_SEANCE);
     desarmerArret();
-    libererEcran();
     majAlerteSon();
     ecrire(el.finDuree, 'Séance terminée · ' + enClair(seance.plan.total));
     montrer('fin');
@@ -664,7 +681,6 @@ summary { padding: 8px 0; color: var(--texte); font-weight: 600; cursor: pointer
     ecrire(el.total, enClair(plan.total));
     dessinerFrise(el.frise, plan);
     if (el.details.open) remplirDetail();
-    majAideSon();
   }
   function remplirDetail() {
     const r = reglages, lignes = [], rounds = [];
@@ -679,12 +695,6 @@ summary { padding: 8px 0; color: var(--texte); font-weight: 600; cursor: pointer
     }
     lignes.push('<li><b>Fin</b></li>');
     el.detail.innerHTML = lignes.join('');
-  }
-  function majAideSon() {
-    el.silencieux.checked = reglages.silencieux;
-    ecrire(el.aideSon, reglages.silencieux
-      ? 'Activé : les bips sonnent même en mode silencieux, mais ta musique s’arrête au démarrage de la séance.'
-      : 'Désactivé : les bips se mélangent à ta musique, mais l’iPhone ne doit pas être en mode silencieux.');
   }
   function dessinerFrise(canvas, plan) {
     const largeur = canvas.clientWidth, hauteur = canvas.clientHeight;
@@ -712,16 +722,18 @@ summary { padding: 8px 0; color: var(--texte); font-weight: 600; cursor: pointer
   el.passer.addEventListener('click', passer);
   el.arreter.addEventListener('click', arreter);
   el.tester.addEventListener('click', () => { preparerSon().then(() => jouer('effort', 0.02)); });
-  el.silencieux.addEventListener('change', () => { reglages.silencieux = el.silencieux.checked; enregistrer(); majAideSon(); });
   el.details.addEventListener('toggle', () => { if (el.details.open) remplirDetail(); });
   el.seance.addEventListener('click', reveillerSon);
+  document.addEventListener('click', garderEcran);
+  document.addEventListener('touchend', garderEcran, { passive: true });
   document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState !== 'visible' || !seance.boucle) return;
+    if (document.visibilityState !== 'visible') return;
+    garderEcran();
+    if (!seance.boucle) return;
     const ms = ecoule();
     annulerSons(ms);
     if (seance.depuis !== null) recaler(ms);
     reveillerSon();
-    garderEcran();
     tick();
   });
   window.addEventListener('resize', () => {
@@ -730,8 +742,11 @@ summary { padding: 8px 0; color: var(--texte); font-weight: 600; cursor: pointer
   });
   document.addEventListener('touchstart', () => {}, { passive: true }); // rend :active effectif sur iPhone
 
+  reglerSessionAudio();
   construireLignes();
   majReglages();
+  reprendreSeance();
+  garderEcran();
   if ('serviceWorker' in navigator && window.isSecureContext) navigator.serviceWorker.register('sw.js').catch(() => {});
 
   // Pour les essais automatiques.
